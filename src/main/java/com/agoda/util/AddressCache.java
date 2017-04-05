@@ -1,11 +1,13 @@
 package com.agoda.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.net.InetAddress;
 import java.util.concurrent.*;
 
 /**
  * @author roshane
- *         Created by roshane on 4/3/17.
  */
 
 /*
@@ -19,27 +21,31 @@ public class AddressCache {
     private final long maxAge;
     private final TimeUnit timeUnit;
     private final ScheduledExecutorService executorService = Executors.newSingleThreadScheduledExecutor();
-    private static final ConcurrentMap<Object, InetAddress> store = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Object, ValueWrapper> store = new ConcurrentHashMap<>();
 
     private static final long INITIAL_DELAY = 1;
 
-    private static class ValueWrapper<T> {
-        private final T value;
-        private final long addedTime;
-        private final long timeToLive;
+    private static final Logger logger= LoggerFactory.getLogger(AddressCache.class);
 
-        public ValueWrapper(T value) {
+    /**
+     * wrapper class holding the actual cached value
+     */
+    private class ValueWrapper {
+        private final InetAddress value;
+        private final long addedTime;
+        private final long expiryTime;
+
+        public ValueWrapper(InetAddress value) {
             this.value = value;
             this.addedTime = System.currentTimeMillis();
-            this.timeToLive = getTTL(this.addedTime);
+            this.expiryTime = getExpiryTime(this.addedTime);
         }
 
-        private long getTTL(long timeAdded) {
-            // TODO: 4/3/17
-            return 0;
+        private long getExpiryTime(long timeAdded) {
+            return addedTime + timeUnit.toMillis(maxAge);
         }
 
-        public T getValue() {
+        public InetAddress getValue() {
             return value;
         }
 
@@ -47,17 +53,38 @@ public class AddressCache {
             return addedTime;
         }
 
-        public long getTimeToLive() {
-            return timeToLive;
+        public long getExpiryTime() {
+            return expiryTime;
+        }
+
+        @Override
+        public String toString() {
+            return "ValueWrapper{" +
+                    "value=" + value +
+                    '}';
         }
     }
 
     public AddressCache(long maxAge, TimeUnit unit) {
+
         this.maxAge = maxAge;
         this.timeUnit = unit;
-        executorService.schedule(() -> {
 
-        }, INITIAL_DELAY, unit);
+        executorService.scheduleWithFixedDelay(() -> {
+            store.values().stream()
+                    .filter(v -> v.expiryTime<System.currentTimeMillis())
+                    .forEach(v -> {
+                        logger.info("cleaning cached entry [{}]",v.toString());
+                        store.remove(v.value.hashCode());
+                    });
+        }, INITIAL_DELAY, maxAge, timeUnit);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (!executorService.isShutdown()) {
+                executorService.shutdown();
+                logger.info("shutting down cache cleaner");
+            }
+        }));
     }
 
     /**
@@ -69,7 +96,7 @@ public class AddressCache {
      */
     public boolean add(InetAddress address) {
         if (!store.containsKey(address.hashCode())) {
-            store.put(address.hashCode(), address);
+            store.put(address.hashCode(), new ValueWrapper(address));
             return true;
         }
         return false;
@@ -82,7 +109,7 @@ public class AddressCache {
      * @return
      */
     public boolean remove(InetAddress address) {
-        InetAddress previous = store.remove(address.hashCode());
+        ValueWrapper previous = store.remove(address.hashCode());
         return previous == null;
     }
 
