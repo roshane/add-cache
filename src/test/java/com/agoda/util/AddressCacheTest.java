@@ -33,12 +33,14 @@ public class AddressCacheTest {
     public void cacheExpiry() throws Exception {
         boolean added = addressCache.add(InetAddress.getLocalHost());
         Thread.sleep(timeUnit.toMillis(MAX_AGE+1));
-//        addressCache.peek()
     }
 
     @Test
     public void remove() throws Exception {
-
+        boolean add = addressCache.add(InetAddress.getLoopbackAddress());
+        assertTrue(add);
+        boolean remove = addressCache.remove(InetAddress.getLoopbackAddress());
+        assertTrue(remove);
     }
 
     @Test

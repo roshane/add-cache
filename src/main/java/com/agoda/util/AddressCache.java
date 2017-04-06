@@ -4,7 +4,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 /**
  * @author roshane
@@ -25,6 +28,7 @@ public class AddressCache {
 
     private static final long INITIAL_DELAY = 1;
 
+    // TODO: 4/7/17 added for test purpose only
     private static final Logger logger= LoggerFactory.getLogger(AddressCache.class);
 
     /**
@@ -110,7 +114,7 @@ public class AddressCache {
      */
     public boolean remove(InetAddress address) {
         ValueWrapper previous = store.remove(address.hashCode());
-        return previous == null;
+        return previous != null;
     }
 
     /**
@@ -120,8 +124,13 @@ public class AddressCache {
      * @return
      */
     public InetAddress peek() {
-        // TODO: 4/3/17
-        return null;
+        Map<Object, ValueWrapper> sorted = store.entrySet()
+                .stream()
+                .sorted((v1, v2) -> Long.valueOf(v1.getValue().addedTime)
+                        .compareTo(Long.valueOf(v2.getValue().addedTime)))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                        (v1,v2)->v2, LinkedHashMap::new));
+
     }
 
     /**
