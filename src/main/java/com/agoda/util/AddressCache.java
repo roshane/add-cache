@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -21,15 +22,14 @@ import java.util.stream.Collectors;
  */
 public class AddressCache {
 
+    private static final long INITIAL_DELAY = 100;
     private final long maxAge;
     private final TimeUnit timeUnit;
     private final ScheduledExecutorService executorService = Executors.newSingleThreadScheduledExecutor();
     private final ConcurrentMap<Object, ValueWrapper> store = new ConcurrentHashMap<>();
 
-    private static final long INITIAL_DELAY = 1;
-
     // TODO: 4/7/17 added for test purpose only
-    private static final Logger logger= LoggerFactory.getLogger(AddressCache.class);
+    private static final Logger logger = LoggerFactory.getLogger(AddressCache.class);
 
     /**
      * wrapper class holding the actual cached value
@@ -41,12 +41,12 @@ public class AddressCache {
 
         public ValueWrapper(InetAddress value) {
             this.value = value;
-            this.addedTime = System.currentTimeMillis();
+            this.addedTime = System.nanoTime();
             this.expiryTime = getExpiryTime(this.addedTime);
         }
 
         private long getExpiryTime(long timeAdded) {
-            return addedTime + timeUnit.toMillis(maxAge);
+            return addedTime + timeUnit.toNanos(maxAge);
         }
 
         public InetAddress getValue() {
@@ -65,6 +65,8 @@ public class AddressCache {
         public String toString() {
             return "ValueWrapper{" +
                     "value=" + value +
+                    ", addedTime=" + addedTime +
+                    ", expiryTime=" + expiryTime +
                     '}';
         }
     }
@@ -75,13 +77,14 @@ public class AddressCache {
         this.timeUnit = unit;
 
         executorService.scheduleWithFixedDelay(() -> {
+//            logger.info("cache cleaning job run");
             store.values().stream()
-                    .filter(v -> v.expiryTime<System.currentTimeMillis())
+                    .filter(v -> v.expiryTime < System.nanoTime())
                     .forEach(v -> {
-                        logger.info("cleaning cached entry [{}]",v.toString());
+                        logger.info("cleaning cached entry [{}] at [{}]", v.toString(),System.nanoTime());
                         store.remove(v.value.hashCode());
                     });
-        }, INITIAL_DELAY, maxAge, timeUnit);
+        }, INITIAL_DELAY, maxAge, TimeUnit.MILLISECONDS);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (!executorService.isShutdown()) {
@@ -124,13 +127,18 @@ public class AddressCache {
      * @return
      */
     public InetAddress peek() {
-        Map<Object, ValueWrapper> sorted = store.entrySet()
+        //TODO ideally we should use a parallel stream since many entries to process
+        Map<Object, ValueWrapper> sortedMap = store.entrySet()
                 .stream()
-                .sorted((v1, v2) -> Long.valueOf(v1.getValue().addedTime)
-                        .compareTo(Long.valueOf(v2.getValue().addedTime)))
+                .sorted((v1,v2)->Long.valueOf(v2.getValue().addedTime)
+                        .compareTo(v1.getValue().addedTime))
+                .limit(1)
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
-                        (v1,v2)->v2, LinkedHashMap::new));
+                        (v1, v2) -> v2, LinkedHashMap::new));
 
+        return sortedMap.get(sortedMap.keySet()
+                .toArray(new Object[sortedMap.keySet().size()])[0])
+                .value;
     }
 
     /**
